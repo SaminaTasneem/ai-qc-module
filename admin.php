@@ -56351,10 +56351,10 @@ if (($ADD == 100000000000001) && ($qc_auth == '1')) {
 		.qc-finished-card { margin-bottom:26px; overflow-x:auto; background:#002130; border:1px solid #063747; border-radius:14px; box-shadow:0 8px 24px rgba(0,0,0,.16); }
 		.qc-finished-title { margin:0 0 18px; color:#00ffc5; font-size:22px; }
 		.qc-finished-note { margin:-8px 0 18px; color:#a9c4ca; }
-		.qc-finished-table { width:100%; min-width:900px; border-collapse:collapse; }
-		.qc-finished-table.qc-finished-list { min-width:900px; }
-		.qc-finished-table th { padding:10px 8px; color:#00ffc5; background:#002b3a; border-bottom:1px solid rgba(0,255,197,.22); text-align:left; white-space:nowrap; }
-		.qc-finished-table td { padding:10px 8px; color:#eaf7f4; border-bottom:1px solid rgba(0,255,197,.13); vertical-align:top; }
+		.qc-finished-table { width:100%; min-width:1100px; border-collapse:collapse; }
+		.qc-finished-table.qc-finished-list { min-width:1100px; }
+		.qc-finished-table th { padding:14px 12px; color:#00ffc5; background:#002b3a; border-bottom:1px solid rgba(0,255,197,.22); text-align:left; white-space:nowrap; }
+		.qc-finished-table td { padding:13px 12px; color:#eaf7f4; border-bottom:1px solid rgba(0,255,197,.13); vertical-align:top; }
 		.qc-finished-table tbody tr:nth-child(odd) td { background:#052b38; }
 		.qc-finished-table tbody tr:nth-child(even) td { background:#073442; }
 		.qc-finished-table a { color:#00ffc5; font-weight:700; text-decoration:none; }
@@ -56410,7 +56410,7 @@ if (($ADD == 100000000000001) && ($qc_auth == '1')) {
 	if ($finished_qc_log_id !== '') {
 		$detail_stmt = "SELECT q.qc_log_id, q.lead_id, q.user AS agent_id, q.list_id,
 			q.campaign_id, q.qc_scorecard_id,
-			q.recording_id, q.date_completed, q.total_checkpoints,
+			q.recording_id, q.date_completed, q.total_checkpoints, q.qc_agent_comment,
 			q.total_points_earned, q.total_points_possible, q.score_percentage,
 			CONCAT_WS(' ', vl.first_name, vl.last_name) AS lead_name, vl.phone_number
 			FROM quality_control_queue AS q
@@ -56426,7 +56426,7 @@ if (($ADD == 100000000000001) && ($qc_auth == '1')) {
 				: number_format((float) $finished_call['score_percentage'], 2) . '%';
 			echo "<a class='qc-finished-back' href='$PHP_SELF?ADD=100000000000001'>&larr; " . _QXZ("Back to finished calls") . "</a>";
 			echo "<div class='qc-finished-card'><table class='qc-finished-table'><thead><tr>";
-			echo "<th>" . _QXZ("QC ID") . "</th><th>" . _QXZ("Lead") . "</th><th>" . _QXZ("Agent ID") . "</th><th>" . _QXZ("Phone") . "</th><th>" . _QXZ("List ID") . "</th><th>" . _QXZ("Campaign") . "</th><th>" . _QXZ("Scorecard") . "</th><th>" . _QXZ("Recording") . "</th><th>" . _QXZ("Completed") . "</th><th>" . _QXZ("Score") . "</th>";
+			echo "<th>" . _QXZ("QC ID") . "</th><th>" . _QXZ("Lead") . "</th><th>" . _QXZ("Agent ID") . "</th><th>" . _QXZ("Phone") . "</th><th>" . _QXZ("List ID") . "</th><th>" . _QXZ("Campaign") . "</th><th>"  . _QXZ("Recording") . "</th><th>" . _QXZ("Completed") . "</th><th>" . _QXZ("Score") . "</th>";
 			echo "</tr></thead><tbody><tr>";
 			echo "<td>" . $finished_escape($finished_call['qc_log_id']) . "</td>";
 			echo "<td>" . $finished_escape($finished_call['lead_id'] . ' - ' . trim((string) $finished_call['lead_name'])) . "</td>";
@@ -56434,10 +56434,34 @@ if (($ADD == 100000000000001) && ($qc_auth == '1')) {
 			echo "<td>" . $finished_escape($finished_call['phone_number']) . "</td>";
 			echo "<td>" . $finished_escape($finished_call['list_id']) . "</td>";
 			echo "<td>" . $finished_escape($finished_call['campaign_id']) . "</td>";
-			echo "<td>" . $finished_escape($finished_call['qc_scorecard_id']) . "</td>";
 			echo "<td>" . $finished_escape($finished_call['recording_id']) . "</td>";
 			echo "<td>" . $finished_escape($finished_call['date_completed']) . "</td>";
 			echo "<td>" . $finished_escape($detail_score) . "</td></tr></tbody></table></div>";
+			$finished_qc_comment = trim(
+				(string) ($finished_call['qc_agent_comment'] ?? '')
+			);
+
+			echo "<h3 class='qc-finished-title'>"
+				. _QXZ("QC Comment")
+				. "</h3>";
+
+			echo "<div class='qc-finished-card'>";
+
+			if ($finished_qc_comment !== '') {
+				echo "<div class='qc-finished-comment' style='
+						padding:20px;
+						white-space:pre-wrap;
+						line-height:1.6;
+					'>"
+					. $finished_escape($finished_qc_comment)
+					. "</div>";
+			} else {
+				echo "<div style='padding:20px;'>"
+					. _QXZ("No QC comment was added")
+					. ".</div>";
+			}
+
+			echo "</div>";
 			echo "<div class='qc-finished-summary'>";
 			echo "<div class='qc-finished-summary-item'>" . _QXZ("Checkpoints") . "<span class='qc-finished-summary-value'>" . (int) $finished_call['total_checkpoints'] . "</span></div>";
 			echo "<div class='qc-finished-summary-item'>" . _QXZ("Earned Points") . "<span class='qc-finished-summary-value'>" . number_format((float) $finished_call['total_points_earned'], 2) . "</span></div>";
@@ -56477,7 +56501,7 @@ if (($ADD == 100000000000001) && ($qc_auth == '1')) {
 			ORDER BY q.date_completed DESC LIMIT 200";
 		$list_rslt = mysql_to_mysqli($list_stmt, $link);
 		echo "<div class='qc-finished-card'><table class='qc-finished-table qc-finished-list'><thead><tr>";
-		echo "<th>" . _QXZ("QC ID") . "</th><th>" . _QXZ("Lead") . "</th><th>" . _QXZ("Agent ID") . "</th><th>" . _QXZ("Phone") . "</th><th>" . _QXZ("List ID") . "</th><th>" . _QXZ("Campaign") . "</th><th>" . _QXZ("Scorecard") . "</th><th>" . _QXZ("Completed") . "</th><th>" . _QXZ("Score") . "</th><th>" . _QXZ("Action") . "</th>";
+		echo "<th>" . _QXZ("QC ID") . "</th><th>" . _QXZ("Lead") . "</th><th>" . _QXZ("Agent ID") . "</th><th>" . _QXZ("Phone") . "</th><th>" . _QXZ("List ID") . "</th><th>" . _QXZ("Campaign")  . "</th><th>" . _QXZ("Completed") . "</th><th>" . _QXZ("Score") . "</th><th>" . _QXZ("Action") . "</th>";
 		echo "</tr></thead><tbody>";
 		$finished_count = 0;
 		while ($finished_call = mysqli_fetch_assoc($list_rslt)) {
@@ -56491,7 +56515,7 @@ if (($ADD == 100000000000001) && ($qc_auth == '1')) {
 			echo "<td>" . $finished_escape($finished_call['phone_number']) . "</td>";
 			echo "<td>" . $finished_escape($finished_call['list_id']) . "</td>";
 			echo "<td>" . $finished_escape($finished_call['campaign_id']) . "</td>";
-			echo "<td>" . $finished_escape($finished_call['qc_scorecard_id']) . "</td>";
+			// echo "<td>" . $finished_escape($finished_call['qc_scorecard_id']) . "</td>";
 			echo "<td>" . $finished_escape($finished_call['date_completed']) . "</td>";
 			echo "<td>" . $finished_escape($list_score) . "</td>";
 			echo "<td><a href='$PHP_SELF?ADD=100000000000001&amp;finished_qc_log_id=" . rawurlencode((string) $finished_call['qc_log_id']) . "'>" . _QXZ("View Checkpoints") . "</a></td></tr>";
@@ -56727,11 +56751,14 @@ if (($ADD == 881) && ($qc_auth == '1')) {
 	.qc-campaign-queue tr.records_list_x a,.qc-campaign-queue tr.records_list_y a{color:var(--qc-label)!important;font-weight:600;text-decoration:underline;text-underline-offset:3px}
 	.qc-campaign-queue tr.records_list_x a:hover,.qc-campaign-queue tr.records_list_y a:hover{filter:brightness(1.15)}
 	.qc-campaign-queue .qc-spacer td{height:22px;padding:0!important;border:0!important;background:transparent!important}
-	.qc-campaign-queue td:nth-child(1){width:10%}
-	.qc-campaign-queue td:nth-child(2){width:15%}
-	.qc-campaign-queue td:nth-child(3){width:32%}
-	.qc-campaign-queue td:nth-child(4){width:28%;white-space:nowrap}
-	.qc-campaign-queue td:nth-child(5){width:15%;text-align:left!important}
+	.qc-campaign-queue .qc-unfinished-table{width:100%!important;table-layout:fixed}
+	.qc-unfinished-table td:nth-child(1){width:8%}
+	.qc-unfinished-table td:nth-child(2){width:12%}
+	.qc-unfinished-table td:nth-child(3){width:25%}
+	.qc-unfinished-table td:nth-child(4){width:9%;white-space:nowrap}
+	.qc-unfinished-table td:nth-child(5){width:10%;text-align:left!important}
+	.qc-unfinished-table td:nth-child(6){width:18%}
+	.qc-unfinished-table td:nth-child(7){width:18%}
 	html[data-theme='dark'] .qc-campaign-queue,body.dark-theme .qc-campaign-queue,body.dark-mode .qc-campaign-queue{--qc-text:#f1f5f9}
 	html[data-theme='light'] .qc-campaign-queue,body.light-theme .qc-campaign-queue,body.light-mode .qc-campaign-queue{--qc-text:#000}
 	@media(max-width:900px){.qc-campaign-queue .qc-queue-heading td{font-size:17px}.qc-campaign-queue tr.qc-column-head td,.qc-campaign-queue tr.qc-status-head td,.qc-campaign-queue tr.records_list_x td,.qc-campaign-queue tr.records_list_y td{padding:11px 10px!important}}
@@ -56765,19 +56792,21 @@ if (($ADD == 881) && ($qc_auth == '1')) {
 	echo "<FONT FACE=\"ARIAL,HELVETICA\" SIZE=2>";
 	# echo "<TABLE>\n";
 
-	echo "<div class='qc-table-wrap'><TABLE cellspacing=0 cellpadding=1>\n";
+	echo "<div class='qc-table-wrap'><TABLE class='qc-unfinished-table' cellspacing=0 cellpadding=1>\n";
 
 	if ($queue_ct_row[0] > 0) {
 		echo "<tr class='qc-section-title'>";
-		echo "<td colspan='5'><font size=1 color=white align=left><B>" . _QXZ("YOUR CURRENT UNFINISHED QC CALLS") . " ($queue_ct_row[0] " . _QXZ("records") . ")</B></td>";
+		echo "<td colspan='7'><font size=1 color=white align=left><B>" . _QXZ("REPORTS READY YET TO BE CHECKED") . " ($queue_ct_row[0] " . _QXZ("records") . ")</B></td>";
 		echo "</tr>";
 		echo "<tr class='qc-column-head'>";
 		echo "<td><font size=1 color=white align=left><B>" . _QXZ("QC ID") . "</B></td>";
 		echo "<td><font size=1 color=white align=left><B>" . _QXZ("LEAD ID") . "</B></td>";
 		echo "<td><font size=1 color=white><B>" . _QXZ("NAME") . "</B></td>";
+		echo "<td><font size=1 color=white><B>" . _QXZ("AgentID") . "</B></td>";
+		echo "<td><font size=1 color=white><B>" . _QXZ("Disposition") . "</B></td>";
 		echo "<td><font size=1 color=white><B>" . _QXZ("Date Claimed") . "</B></td>";
 		echo "<td><font size=1 color=white><B>" . _QXZ("Date Modified") . "</B></td></tr>\n";
-		$queue_stmt = "select * from quality_control_queue where qc_agent='$PHP_AUTH_USER' and qc_status='CLAIMED' order by date_claimed";
+		$queue_stmt = "select * from quality_control_queue where qc_agent='$PHP_AUTH_USER' and qc_status='CLAIMED' order by user asc, date_claimed";
 		if ($DB) {
 			echo $queue_stmt . "<BR>\n";
 		}
@@ -56792,6 +56821,17 @@ if (($ADD == 881) && ($qc_auth == '1')) {
 			$name_rslt = mysql_to_mysqli($name_stmt, $link);
 			$name_row = mysqli_fetch_row($name_rslt);
 			$full_name = trim($name_row[0]);
+			$agent_id = htmlspecialchars(
+    			(string) ($queue_row['user'] ?? ''),
+				ENT_QUOTES,
+				'UTF-8'
+			);
+
+			$disposition = htmlspecialchars(
+				(string) ($queue_row['status'] ?? ''),
+				ENT_QUOTES,
+				'UTF-8'
+			);
 
 			if (preg_match("/1$|3$|5$|7$|9$/i", $q)) {
 				$bgcolor = 'class="records_list_x"';
@@ -56802,15 +56842,19 @@ if (($ADD == 881) && ($qc_auth == '1')) {
 			echo "<td><font size=1 align=left><B> <a href=\"qc_modify_lead.php?qc_log_id=$qc_id&lead_id=$lead_id$referring_URL_string\">$qc_id</a></B></td>";
 			echo "<td><font size=1 align=left><B> $lead_id</B></td>";
 			echo "<td><font size=1><B> $full_name</B></td>";
+			echo "<td><font size=1><B> $agent_id</B></td>";
+			echo "<td><font size=1><B> $disposition</B></td>";
 			echo "<td><font size=1><B> $date_claimed</B></td>";
 			echo "<td><font size=1><B> $date_modified</B></td></tr>\n";
 			$q++;
 		}
 		echo "<tr class='qc-spacer'>";
-		echo "<td colspan='5'>&nbsp;</td>";
+		echo "<td colspan='7'>&nbsp;</td>";
 		echo "</tr>";
 	}
 
+	echo "</TABLE></div>\n";
+	echo "<div class='qc-table-wrap'><TABLE cellspacing=0 cellpadding=1>\n";
 
 	if ($queue_ct_row[0] < $SSqc_claim_limit) {
 
@@ -57002,6 +57046,7 @@ if (($ADD == 881) && ($qc_auth == '1')) {
 	})();
 	</script>";
 }
+
 
 
 ######################

@@ -59,6 +59,87 @@ $PHP_AUTH_USER = isset($_SESSION['user'])
 $PHP_AUTH_PW = isset($_SESSION['pass'])
 	? (string) $_SESSION['pass']
 	: (string) ($_SERVER['PHP_AUTH_PW'] ?? '');
+
+// Save the overall QC comment without leaving or finishing the QC record.
+if (
+	$_SERVER['REQUEST_METHOD'] === 'POST'
+	&& ($_GET['qc_action'] ?? '') === 'save_agent_comment'
+) {
+	header('Content-Type: application/json; charset=utf-8');
+
+	$comment_response = static function (int $status, array $payload): void {
+		http_response_code($status);
+		echo json_encode($payload, JSON_UNESCAPED_UNICODE);
+		exit;
+	};
+
+	$request = json_decode((string) file_get_contents('php://input'), true);
+	$qc_comment_log_id = is_array($request) ? trim((string) ($request['qc_log_id'] ?? '')) : '';
+	$qc_comment_text = is_array($request) ? trim((string) ($request['qc_agent_comment'] ?? '')) : '';
+
+	if ($qc_comment_log_id === '' || !ctype_digit($qc_comment_log_id)) {
+		$comment_response(422, ['success' => false, 'message' => 'A valid QC ID was not provided.']);
+	}
+
+	$comment_length = function_exists('mb_strlen')
+		? mb_strlen($qc_comment_text, 'UTF-8')
+		: strlen($qc_comment_text);
+	if ($comment_length > 10000) {
+		$comment_response(422, ['success' => false, 'message' => 'The QC comment is too long.']);
+	}
+
+	$comment_access_stmt = mysqli_prepare(
+		$link,
+		"SELECT q.qc_log_id
+		   FROM quality_control_queue AS q
+		   JOIN vicidial_users AS u ON u.user = q.qc_agent
+		--   WHERE q.qc_log_id = ? AND q.qc_agent = ? AND q.qc_status = 'CLAIMED'
+			WHERE q.qc_log_id = ? AND q.qc_status = 'CLAIMED'
+		    AND u.active = 'Y' AND u.qc_enabled = '1'
+		  LIMIT 1"
+	);
+	if ($comment_access_stmt === false) {
+		$comment_response(500, ['success' => false, 'message' => 'Could not verify QC access.']);
+	}
+
+	// mysqli_stmt_bind_param($comment_access_stmt, 'ss', $qc_comment_log_id, $PHP_AUTH_USER);
+	mysqli_stmt_bind_param($comment_access_stmt, 's', $qc_comment_log_id);
+	mysqli_stmt_execute($comment_access_stmt);
+	$comment_access_result = mysqli_stmt_get_result($comment_access_stmt);
+	$has_comment_access = $comment_access_result !== false && mysqli_fetch_assoc($comment_access_result) !== null;
+	mysqli_stmt_close($comment_access_stmt);
+
+	if (!$has_comment_access) {
+		$comment_response(403, ['success' => false, 'message' => 'This QC record is not available for comments.']);
+	}
+
+	$comment_update_stmt = mysqli_prepare(
+		$link,
+		"UPDATE quality_control_queue
+		    SET qc_agent_comment = ?
+			WHERE qc_log_id = ? AND qc_status = 'CLAIMED'"
+	);
+
+	if ($comment_update_stmt === false) {
+		$comment_response(500, ['success' => false, 'message' => 'Could not prepare the comment update.']);
+	}
+
+	mysqli_stmt_bind_param(
+		$comment_update_stmt,
+		'ss',
+		$qc_comment_text,
+		$qc_comment_log_id,
+		// $PHP_AUTH_USER
+	);
+	if (!mysqli_stmt_execute($comment_update_stmt)) {
+		mysqli_stmt_close($comment_update_stmt);
+		$comment_response(500, ['success' => false, 'message' => 'Could not save the QC comment.']);
+	}
+
+	mysqli_stmt_close($comment_update_stmt);
+	$comment_response(200, ['success' => true, 'message' => 'Comment saved.']);
+}
+
 $PHP_SELF = $_SERVER['PHP_SELF'];
 $PHP_SELF = preg_replace('/\.php.*/i', '.php', $PHP_SELF);
 if (isset($_GET["vendor_id"])) {
@@ -340,6 +421,13 @@ if (isset($_POST["qc_process_status"])) {
 	$qc_process_status = $_POST["qc_process_status"];
 } elseif (isset($_GET["qc_process_status"])) {
 	$qc_process_status = $_GET["qc_process_status"];
+}
+if (isset($_POST["qc_agent_comment"])) {
+	$qc_agent_comment = $_POST["qc_agent_comment"];
+} elseif (isset($_GET["qc_agent_comment"])) {
+	$qc_agent_comment = $_GET["qc_agent_comment"];
+} else {
+	$qc_agent_comment = '';
 }
 if (isset($_POST["finish_qc"])) {
 	$finish_qc = $_POST["finish_qc"];
@@ -666,6 +754,7 @@ if ($finish_qc && $qc_log_id && $qc_process_status && $qc_agent == $PHP_AUTH_USE
 			echo _QXZ("Error.  No lead ID");
 			exit;
 		}
+		$qc_agent_comment_sql = mysqli_real_escape_string($link, trim((string) $qc_agent_comment));
 		$upd_stmt = "UPDATE quality_control_queue AS q
 			LEFT JOIN (
 				SELECT qc_log_id,
@@ -677,6 +766,7 @@ if ($finish_qc && $qc_log_id && $qc_process_status && $qc_agent == $PHP_AUTH_USE
 				GROUP BY qc_log_id
 			) AS totals ON totals.qc_log_id=q.qc_log_id
 			SET q.qc_status='$qc_process_status',
+				q.qc_agent_comment='$qc_agent_comment_sql',
 				q.date_completed=now(),
 				q.total_checkpoints=COALESCE(totals.total_checkpoints, 0),
 				q.total_points_earned=COALESCE(totals.total_points_earned, 0),
@@ -859,6 +949,7 @@ if (!$qc_log_id) {
 		$qc_recording_id = $queue_row["recording_id"];
 		$qc_scorecard_id = $queue_row["qc_scorecard_id"];
 		$qc_webform = $queue_row['qc_web_form_address'];
+		$qc_agent_comment = $queue_row['qc_agent_comment'] ?? '';
 
 		$redirect_URL_str = "&qc_display_group_type=$scorecard_source";
 		switch ($scorecard_source) {
@@ -1480,6 +1571,45 @@ if (preg_match("/cf_encrypt/", $active_modules)) {
 			}
 
 			return Promise.resolve(false);
+		}
+
+		function SaveQcAgentComment(button) {
+			var commentField = document.getElementById('qc_agent_comment');
+			var statusField = document.getElementById('qc-comment-save-status');
+
+			if (!commentField || !qc_log_id) {
+				if (statusField) statusField.textContent = 'Unable to identify this QC record.';
+				return;
+			}
+
+			button.disabled = true;
+			button.value = 'SAVING...';
+			if (statusField) statusField.textContent = '';
+
+			fetch('qc_modify_lead.php?qc_action=save_agent_comment', {
+				method: 'POST',
+				headers: {'Content-Type': 'application/json'},
+				credentials: 'same-origin',
+				body: JSON.stringify({
+					qc_log_id: String(qc_log_id),
+					qc_agent_comment: commentField.value
+				})
+			})
+				.then(function(response) {
+					return response.json().then(function(data) {
+						if (!response.ok || !data.success) {
+							throw new Error(data.message || 'Could not save comment.');
+						}
+						if (statusField) statusField.textContent = 'Comment saved.';
+					});
+				})
+				.catch(function(error) {
+					if (statusField) statusField.textContent = error.message || 'Comment could not be saved.';
+				})
+				.then(function() {
+					button.disabled = false;
+					button.value = 'SAVE QC COMMENT';
+				});
 		}
 
 		function UpdateCustomerInfo(lead_id, field_name, field_value) {
@@ -2355,7 +2485,7 @@ if (preg_match("/cf_encrypt/", $active_modules)) {
 				}
 				}
 				echo "</div>";
-				echo "<div class='qc-sentiment-card'><div class='qc-sentiment-card-title'>" . _QXZ("Emotion Detection") . "</div><p class='qc-sentiment-reason'>" . _QXZ("Dominant emotion") . ": <strong>" . $qc_escape($qc_sentiment_data['dominant_emotion']) . "</strong></p><div class='qc-emotion-list'>";
+				echo "<div class='qc-sentiment-card'><div class='qc-sentiment-card-title'>" . _QXZ("Customer Emotion Detection") . "</div><p class='qc-sentiment-reason'>" . _QXZ("Dominant emotion") . ": <strong>" . $qc_escape($qc_sentiment_data['dominant_emotion']) . "</strong></p><div class='qc-emotion-list'>";
 				foreach ($qc_emotions as $qc_emotion) {
 					if (!is_array($qc_emotion)) continue;
 					$qc_emotion_name = $qc_escape($qc_emotion['emotion'] ?? '');
@@ -3338,7 +3468,7 @@ if (preg_match("/cf_encrypt/", $active_modules)) {
 				# JCJ - QC LOG span
 				echo "\n\n<span id='qc_master_span' style='display:" . $qc_master_span_visibility . "'><CENTER>\n";
 
-				echo "<form action='" . $PHP_SELF . "' name='qc_form' id='qc_form' method='get'>\n";
+				echo "<form action='" . $PHP_SELF . "' name='qc_form' id='qc_form' method='post'>\n";
 
 				echo "<input type=hidden name=DB value=\"$DB\">\n";
 				echo "<input type=hidden name=lead_id value=\"$lead_id\">\n";
@@ -3691,13 +3821,14 @@ if (preg_match("/cf_encrypt/", $active_modules)) {
 
 									var result = applyCheckpointEvaluation(data);
 
-									if (result.updated === 0) {
+									var expectedCheckpointCount = document.querySelectorAll('[id^=\"checkpoint_points_earned\"]').length;
+									if (result.updated !== expectedCheckpointCount) {
 										if (data.cached) {
 											window.location.replace($qc_return_url_json);
 											return;
 										}
 
-									throw new Error('AI returned incomplete checkpoint results. Please press the Generate AI Checkpoints & Sentiment button to try again.');
+									throw new Error('AI returned only ' + result.updated + ' of ' + expectedCheckpointCount + ' checkpoint results. Please generate the analysis again.');
 									}
 
 									var saved = await Promise.all(result.saveRequests);
@@ -3761,6 +3892,49 @@ if (preg_match("/cf_encrypt/", $active_modules)) {
 								}
 							}
 						</script>";
+						$qc_agent_comment_display = htmlspecialchars((string) $qc_agent_comment, ENT_QUOTES, 'UTF-8');
+						echo "<tr bgcolor='#000' class='qc-comment-row'>";
+						echo "<td align='left'><font class='standard_bold white_text'>" . _QXZ("QC COMMENT") . ": </font></td>";
+						// echo "<td colspan='5'><textarea name='qc_agent_comment' id='qc_agent_comment' rows='5' class='cust_form' style='width:98%; box-sizing:border-box;'>$qc_agent_comment_display</textarea></td>";
+						echo "<td colspan='5'>";
+						echo "<textarea
+								name='qc_agent_comment'
+								id='qc_agent_comment'
+								rows='5'
+								class='cust_form'
+								style='width:98%; box-sizing:border-box;'>"
+							. $qc_agent_comment_display
+							. "</textarea><br>";
+
+						// echo "<input
+						// 		type='button'
+						// 		value='SAVE QC COMMENT'
+						// 		class='green_btn'
+						// 		onclick='SaveQcAgentComment(this)'>";
+
+						// echo " <span id='qc-comment-save-status'></span>";
+						echo "<div style='
+								display:flex;
+								justify-content:flex-end;
+								align-items:center;
+								gap:12px;
+								margin:15px 0;
+								padding-right:2%;
+							'>";
+
+						echo "<span id='qc-comment-save-status'></span>";
+
+						echo "<input
+								type='button'
+								value='SAVE QC COMMENT'
+								class='green_btn'
+								style='margin:0;'
+								onclick='SaveQcAgentComment(this)'>";
+
+						echo "</div>";
+						echo "</td>";
+						
+						echo "</tr>\n";
 						echo "<tr bgcolor='#000'>";
 						echo "<td align='left'><font class='standard_bold white_text'>" . _QXZ("FINISH QC") . ": </font></td>";
 

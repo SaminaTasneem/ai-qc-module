@@ -283,6 +283,7 @@ if (isset($_GET["submit"])) {
 
     $MAIN .= "<h3>Rapport Summary for Campaign: $campaign_id</h3>";
     $MAIN .= "<div class='note-box'><em><strong>* Note: The Total Calls count represents only calls with human conversation.</strong></em></div>";
+    $MAIN .= "<div class='note-box'><em><strong>* Note: Clicking on a phone number will take you to the Quality control page.</strong></em></div>";
 
     $MAIN .= "<table>";
     $MAIN .= "<tr><th>User</th><th>Agent Name</th><th>* Total Calls</th><th>Calls > 2 Min</th><th>% Over 2 Min</th><th>Rapport Verdict</th><th>Phones (Calls > 2 Min)</th><th>Sales</th></tr>";

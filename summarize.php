@@ -309,6 +309,7 @@ Use the exact supporting timestamp as [HH:MM:SS]. If several moments support the
 
 $systemInstruction .= '\nFor sentiment_analysis, every score and confidence must be an integer from 0 through 100. Emotions must use only: Curious, Interested, Skeptical, Confused, Hesitant, Frustrated, Excited, Happy, Impatient, Neutral. Base all reasons on audible behavior, wording, and engagement; do not invent facts. For agent_behavior, 100 means consistently polite and professional and 0 means severely inappropriate. Evaluate only the Agent for rudeness, slang, profanity, insults, interruptions, dismissiveness, aggressive tone, or unprofessional language. Add a flag only when there is clear audible evidence, using one of these exact types: Rudeness, Slang, Profanity, Insult, Interruption, Dismissiveness, Aggressive Tone, Unprofessional Language. Include an exact timestamp and brief evidence for every flag. Return an empty flags array when none are detected.';
 $systemInstruction .= '\nFor agent_coaching, give a concise, constructive overall assessment and 1 to 4 specific suggestions showing how the Agent could have handled the conversation more effectively. Anchor each suggestion to an audible moment with an exact timestamp, describe the observed behavior without speculation, recommend a practical alternative, and include a natural example phrase suited to the conversation. Focus on listening, empathy, clarity, objection handling, discovery, professionalism, and next steps as applicable. Do not invent customer needs or events that are not audible.';
+$systemInstruction .= '\nYou must return exactly one result for every supplied checkpoint. Copy checkpoint_row_id and checkpoint_rank exactly from the supplied checkpoint and do not omit any checkpoint. Evidence and reason must never be empty. When a requirement was not observed, use status "Fail", earned_points 0, timestamp "N/A", evidence "The required behavior was not observed in the recording.", and reason "The checkpoint requirement was not met."';
 
 $prompt = "Analyze the attached call recording and generate checkpoint and sentiment results.\n\n"
     . "Checkpoints:\n" . json_encode($checkpointDefinitions, JSON_UNESCAPED_UNICODE);
@@ -351,6 +352,11 @@ $analysis = null;
 $maximumAttempts = 3;
 $attemptsMade = 0;
 $uploadedGeminiFile = null;
+$expectedCheckpointIds = array_map(
+    static fn(array $definition): string => (string) ($definition['checkpoint_row_id'] ?? ''),
+    $checkpointDefinitions
+);
+sort($expectedCheckpointIds);
 
 try {
     $uploadedGeminiFile = geminiUploadAudio($gemini, (string) $recording['path']);
@@ -375,6 +381,32 @@ try {
             $cleanOutput = preg_replace('/^\s*```(?:json)?\s*|\s*```\s*$/i', '', $output) ?? $output;
             $analysis = json_decode(trim($cleanOutput), true);
 
+            $returnedCheckpoints = is_array($analysis['checkpoints'] ?? null)
+                ? $analysis['checkpoints']
+                : [];
+            $returnedCheckpointIds = [];
+            $allCheckpointCommentsPresent = true;
+
+            foreach ($returnedCheckpoints as $checkpointResult) {
+                if (!is_array($checkpointResult)) {
+                    $allCheckpointCommentsPresent = false;
+                    continue;
+                }
+
+                $returnedCheckpointIds[] = (string) ($checkpointResult['checkpoint_row_id'] ?? '');
+                if (
+                    trim((string) ($checkpointResult['evidence'] ?? '')) === ''
+                    || trim((string) ($checkpointResult['reason'] ?? '')) === ''
+                ) {
+                    $allCheckpointCommentsPresent = false;
+                }
+            }
+
+            sort($returnedCheckpointIds);
+            $allCheckpointsReturned = count($returnedCheckpointIds) === count($expectedCheckpointIds)
+                && $returnedCheckpointIds === $expectedCheckpointIds
+                && $allCheckpointCommentsPresent;
+
             $hasRequiredAnalysis = $analysisMode === 'summary_only'
                 ? is_array($analysis)
                     && is_bool($analysis['call_connected'] ?? null)
@@ -389,6 +421,7 @@ try {
                 : is_array($analysis)
                     && is_array($analysis['checkpoints'] ?? null)
                     && ($analysis['checkpoints'] ?? []) !== []
+                    && $allCheckpointsReturned
                     && is_array($analysis['sentiment_analysis'] ?? null)
                     && trim((string) ($analysis['sentiment_analysis']['agent_coaching']['overall_assessment'] ?? '')) !== ''
                     && is_array($analysis['sentiment_analysis']['agent_coaching']['suggestions'] ?? null)
@@ -481,6 +514,23 @@ if ($analysisMode === 'summary_only') {
 if ($evaluatedCheckpoints === []) {
     respond(502, ['success' => false, 'message' => 'Gemini did not return checkpoint results.']);
 }
+
+foreach ($evaluatedCheckpoints as &$checkpointResult) {
+    if (!is_array($checkpointResult)) {
+        continue;
+    }
+
+    if (trim((string) ($checkpointResult['evidence'] ?? '')) === '') {
+        $checkpointResult['evidence'] = 'The required behavior was not observed in the recording.';
+    }
+    if (trim((string) ($checkpointResult['reason'] ?? '')) === '') {
+        $checkpointResult['reason'] = 'The checkpoint requirement was not met.';
+    }
+    if (trim((string) ($checkpointResult['timestamp'] ?? '')) === '') {
+        $checkpointResult['timestamp'] = 'N/A';
+    }
+}
+unset($checkpointResult);
 
 $clampScore = static function ($value): int {
     return max(0, min(100, (int) round((float) $value)));
