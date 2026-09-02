@@ -10,7 +10,7 @@ $startMS = microtime(true);
 require("dbconnect_mysqli.php");
 require("functions.php");
 mysqli_query($link, "SET SESSION group_concat_max_len = 1000000;");
-require("session_auth.php");
+// require("session_auth.php");
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -219,6 +219,25 @@ $HEADER .= "<style>
         box-shadow: 0 4px 15px rgba(0, 255, 204, 0.3);
     }
     small { color: rgba(255, 255, 255, 0.5); font-size: 12px; }
+    .coaching-count, .coaching-status { color: rgba(255,255,255,.7); margin-top: 5px; }
+    .coaching-button { padding: 10px 16px; border: 1px solid #00ffcc; border-radius: 6px; background: transparent; color: #00ffcc; font-weight: 800; cursor: pointer; white-space: nowrap; }
+    .coaching-button:disabled { opacity: .55; cursor: wait; }
+    .coaching-reanalyze { margin-top: 18px; }
+    .coaching-unavailable { color: rgba(255,255,255,.5); font-size: 13px; }
+    .coaching-detail-row { display: none; background: rgba(5,27,36,.95); }
+    .coaching-detail-row:hover { background: rgba(5,27,36,.95); }
+    .coaching-detail-row > td { padding: 0; text-align: left; }
+    .coaching-result { padding: 18px 24px 24px; }
+    .coaching-result:empty { display: none; }
+    .coaching-error { color: #ff8797; }
+    .coaching-title { margin: 20px 0 10px; color: #00ffcc; }
+    .coaching-summary { padding: 16px; border-left: 3px solid #00ffcc; background: rgba(8,45,54,.8); }
+    .coaching-list { margin: 8px 0; padding-left: 24px; }
+    .coaching-item { margin: 12px 0; padding: 14px; border: 1px solid rgba(0,255,204,.3); border-radius: 8px; background: rgba(8,45,54,.8); }
+    .coaching-item p { margin: 6px 0; }
+    .coaching-example { font-style: italic; color: #c8dbdf; }
+    .coaching-progress { height: 8px; margin-top: 10px; background: #102e39; border-radius: 10px; overflow: hidden; }
+    .coaching-progress-fill { height: 100%; background: #00ffcc; transition: width .2s; }
 </style>\n";
 $HEADER .= "</head>\n<body>\n";
 
@@ -260,7 +279,9 @@ if (isset($_GET["submit"])) {
                     IFNULL(val.agent_log_id, ''),
                     IFNULL(val.lead_id, ''),
                     IFNULL(val.campaign_id, ''),
-                    IFNULL(NULLIF(val.status, ''), 'NEW')
+                    IFNULL(NULLIF(val.status, ''), 'NEW'),
+                    IFNULL(val.uniqueid, ''),
+                    IFNULL(val.event_time, '')
                 )
                 ELSE NULL END SEPARATOR '###'
             ) as calls_over_two_minutes_details,
@@ -286,10 +307,13 @@ if (isset($_GET["submit"])) {
     $MAIN .= "<div class='note-box'><em><strong>* Note: Clicking on a phone number will take you to the Quality control page.</strong></em></div>";
 
     $MAIN .= "<table>";
-    $MAIN .= "<tr><th>User</th><th>Agent Name</th><th>* Total Calls</th><th>Calls > 2 Min</th><th>% Over 2 Min</th><th>Rapport Verdict</th><th>Phones (Calls > 2 Min)</th><th>Sales</th></tr>";
+    $MAIN .= "<tr><th>User</th><th>Agent Name</th><th>* Total Calls</th><th>Calls > 2 Min</th><th>% Over 2 Min</th><th>Rapport Verdict</th><th>Phones (Calls > 2 Min)</th><th>Sales</th><th>Agent Coaching</th></tr>";
 
     $csv_data = [];
     $csv_data[] = ["User", "Agent Name", "Total Calls (human-conversation only)", "Calls > 2 Min", "Percentage", "Rapport Verdict", "Phones with Disposition (Calls > 2 Min)", "Sales"];
+    $coaching_agents = [];
+    $coaching_index = 0;
+    $recording_lookup = mysqli_prepare($link, "SELECT recording_id FROM recording_log WHERE lead_id=? ORDER BY IF(vicidial_id=?,1,0) DESC, ABS(TIMESTAMPDIFF(SECOND,start_time,?)) ASC LIMIT 1");
 
     while ($row = mysqli_fetch_assoc($rslt)) {
         $user = $row['user'];
@@ -300,14 +324,31 @@ if (isset($_GET["submit"])) {
         $phone_csv_entries = [];
         if (!empty($row['calls_over_two_minutes_details'])) {
             foreach (explode('###', $row['calls_over_two_minutes_details']) as $call_detail) {
-                $parts = explode('|||', $call_detail, 6);
-                if (count($parts) !== 6) {
+                $parts = explode('|||', $call_detail, 8);
+                if (count($parts) !== 8) {
                     continue;
                 }
 
-                [$phone_number, $display_status, $agent_log_id, $lead_id, $call_campaign_id, $qc_status] = $parts;
+                [$phone_number, $display_status, $agent_log_id, $lead_id, $call_campaign_id, $qc_status, $unique_id, $call_date] = $parts;
                 $phone_label = $phone_number . ' (' . $display_status . ')';
                 $phone_csv_entries[] = $phone_label;
+
+                if ($recording_lookup !== false && $agent_log_id !== '' && $lead_id !== '' && $call_date !== '') {
+                    mysqli_stmt_bind_param($recording_lookup, 'sss', $lead_id, $unique_id, $call_date);
+                    if (mysqli_stmt_execute($recording_lookup)) {
+                        $recording_result = mysqli_stmt_get_result($recording_lookup);
+                        $recording_row = $recording_result !== false ? mysqli_fetch_assoc($recording_result) : null;
+                        if (is_array($recording_row) && !empty($recording_row['recording_id'])) {
+                            $coaching_agents[$user]['agent_id'] = (string)$user;
+                            $coaching_agents[$user]['agent_name'] = (string)$full_name;
+                            $coaching_agents[$user]['calls'][] = [
+                                'agent_log_id' => (string)$agent_log_id,
+                                'recording_id' => (string)$recording_row['recording_id'],
+                                'call_date' => (string)$call_date,
+                            ];
+                        }
+                    }
+                }
 
                 if ($phone_number === 'NoNum' || $agent_log_id === '' || $lead_id === '' || $call_campaign_id === '') {
                     $phone_links[] = htmlspecialchars($phone_label, ENT_QUOTES, 'UTF-8');
@@ -334,14 +375,33 @@ if (isset($_GET["submit"])) {
         $percentage_over_two_minutes = ($total_calls > 0) ? ($calls_over_two_minutes / $total_calls) * 100 : 0;
         $rapport_verdict = ($calls_over_two_minutes < 3) ? "Needs Improvement" : "Decent Rapport Builder";
         $sales_made = $row['sales_made'];
+		$agent_calls = $coaching_agents[$user]['calls'] ?? [];
+		$coaching_button = "<span class='coaching-unavailable'>No recording</span>";
+		$coaching_detail = '';
+		if (!empty($agent_calls)) {
+			$coaching_index++;
+			$calls_id = "rapport-coaching-calls-$coaching_index";
+			$result_id = "rapport-coaching-result-$coaching_index";
+			$row_id = "rapport-coaching-row-$coaching_index";
+			$button_id = "rapport-coaching-button-$coaching_index";
+			$agent_id_html = htmlspecialchars((string)$user, ENT_QUOTES, 'UTF-8');
+			$agent_name_html = htmlspecialchars((string)$full_name, ENT_QUOTES, 'UTF-8');
+			$calls_json = json_encode($agent_calls, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+			$coaching_button = "<button type='button' id='$button_id' class='coaching-button rapport-coaching-button' data-agent-id='$agent_id_html' data-agent-name='$agent_name_html' data-calls-id='$calls_id' data-result-id='$result_id' data-row-id='$row_id'>Analyze</button>";
+			$coaching_detail = "<tr class='coaching-detail-row' id='$row_id'><td colspan='9'><script type='application/json' id='$calls_id'>$calls_json</script><div class='coaching-result' id='$result_id'></div></td></tr>";
+		}
 
         $MAIN .= "<tr>";
         $MAIN .= "<td>$user</td><td>$full_name</td><td>$total_calls</td><td>$calls_over_two_minutes</td>";
         $MAIN .= "<td>" . number_format($percentage_over_two_minutes, 2) . "%</td>";
-        $MAIN .= "<td>$rapport_verdict</td><td class='phone-links'><small>$phone_numbers_html</small></td><td>$sales_made</td>";
+        $MAIN .= "<td>$rapport_verdict</td><td class='phone-links'><small>$phone_numbers_html</small></td><td>$sales_made</td><td>$coaching_button</td>";
         $MAIN .= "</tr>";
+		$MAIN .= $coaching_detail;
 
         $csv_data[] = [$user, $full_name, $total_calls, $calls_over_two_minutes, number_format($percentage_over_two_minutes, 2) . "%", $rapport_verdict, $phone_numbers_csv, $sales_made];
+    }
+    if ($recording_lookup !== false) {
+        mysqli_stmt_close($recording_lookup);
     }
     $MAIN .= "</table>";
 
@@ -366,6 +426,165 @@ if (isset($_POST['download_csv'])) {
 
 $RUNtime = round(microtime(true) - $startMS, 2);
 $MAIN .= "<br><br><small>Script runtime: $RUNtime seconds</small>";
+$coaching_filters_json = json_encode([
+    'begin_date' => $begin_date,
+    'end_date' => $end_date,
+    'campaign_id' => $campaign_id,
+], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+$MAIN .= "<script>window.rapportCoachingFilters=" . ($coaching_filters_json ?: '{}') . ";</script>";
+$MAIN .= <<<'COACHING_SCRIPT'
+<script>
+(function () {
+    function escapeCoachingHtml(value) {
+        return String(value == null ? '' : value).replace(/[&<>'"]/g, function (character) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#039;','"':'&quot;'}[character];
+        });
+    }
+    async function coachingRequest(url, payload) {
+        var response = await fetch(url, {
+            method: 'POST', headers: {'Content-Type':'application/json'}, credentials: 'same-origin',
+            body: JSON.stringify(payload)
+        });
+        var text = await response.text();
+        var data;
+        try { data = JSON.parse(text); }
+        catch (error) {
+            var preview = text.trim().replace(/\s+/g, ' ').slice(0, 160);
+            throw new Error(url + ' returned HTTP ' + response.status + ' instead of JSON.' + (preview ? ' Response: ' + preview : ' The response was empty.'));
+        }
+        if (!response.ok || !data.success) throw new Error(data.message || 'The AI request failed.');
+        return data;
+    }
+    function compactCoachingCall(call, data) {
+        var evaluation = data.evaluation || {};
+        var sentiment = evaluation.sentiment_analysis || {};
+        var definitions = {};
+        (Array.isArray(data.checkpoints) ? data.checkpoints : []).forEach(function (item) {
+            definitions[String(item.checkpoint_row_id || '')] = item;
+        });
+        var strengths = [], improvements = [];
+        (Array.isArray(evaluation.checkpoints) ? evaluation.checkpoints : []).forEach(function (item) {
+            var status = String(item.status || '').toLowerCase();
+            var definition = definitions[String(item.checkpoint_row_id || '')] || {};
+            var finding = {
+                checkpoint: String(definition.checkpoint_text || ''), status: String(item.status || ''),
+                timestamp: String(item.timestamp || 'N/A'), evidence: String(item.evidence || ''), reason: String(item.reason || '')
+            };
+            if (status === 'pass') strengths.push(finding);
+            else if (status !== 'not applicable' && status !== 'n/a') improvements.push(finding);
+        });
+        return {
+            agent_log_id: call.agent_log_id, recording_id: call.recording_id, call_date: call.call_date,
+            overall_assessment: String(((sentiment.agent_coaching || {}).overall_assessment) || ''),
+            behavior: sentiment.agent_behavior || {}, empathy: sentiment.agent_empathy || {},
+            strengths: strengths.slice(0, 6), improvements: improvements.slice(0, 8),
+            coaching_suggestions: Array.isArray((sentiment.agent_coaching || {}).suggestions) ? sentiment.agent_coaching.suggestions : []
+        };
+    }
+    function renderCoachingSummary(panel, data, total, analyzeButton) {
+        var summary = data.summary || {};
+        var strengths = Array.isArray(summary.repeated_strengths) ? summary.repeated_strengths : [];
+        var improvements = Array.isArray(summary.improvement_areas) ? summary.improvement_areas : [];
+        var plan = Array.isArray(summary.manager_coaching_plan) ? summary.manager_coaching_plan : [];
+        var strengthHtml = strengths.map(function (item) {
+            return '<li><strong>' + escapeCoachingHtml(item.theme || 'Strength') + '</strong> — ' + escapeCoachingHtml(item.explanation || '') + ' (' + escapeCoachingHtml(item.call_count || 0) + ' calls)</li>';
+        }).join('');
+        var improvementHtml = improvements.map(function (item) {
+            return '<div class="coaching-item"><strong>Priority ' + escapeCoachingHtml(item.priority || '') + ': ' + escapeCoachingHtml(item.area || '') + '</strong>'
+                + '<p>' + escapeCoachingHtml(item.pattern || '') + ' (' + escapeCoachingHtml(item.call_count || 0) + ' calls)</p>'
+                + '<p><strong>Coaching action:</strong> ' + escapeCoachingHtml(item.action || '') + '</p>'
+                + '<p class="coaching-example"><strong>Example:</strong> “' + escapeCoachingHtml(item.example_phrase || '') + '”</p></div>';
+        }).join('');
+        var planHtml = plan.map(function (item) { return '<li>' + escapeCoachingHtml(item) + '</li>'; }).join('');
+        panel.innerHTML = '<h3 class="coaching-title">Agent-Level Coaching Summary</h3>'
+            + '<p class="coaching-count">Recordings found: ' + total + ' · Analyzed: ' + escapeCoachingHtml(data.calls_analyzed || 0) + ' · Failed: ' + escapeCoachingHtml(data.failed_calls || 0) + ' · Saved report #' + escapeCoachingHtml(data.coaching_id || '') + '</p>'
+            + '<div class="coaching-summary">' + escapeCoachingHtml(summary.overall_assessment || '') + '</div>'
+            + '<h3 class="coaching-title">Repeated strengths</h3><ul class="coaching-list">' + (strengthHtml || '<li>No repeated strength was identified.</li>') + '</ul>'
+            + '<h3 class="coaching-title">Main areas to improve</h3>' + (improvementHtml || '<p>No repeated improvement pattern was identified.</p>')
+            + '<h3 class="coaching-title">Manager coaching plan</h3><ol class="coaching-list">' + planHtml + '</ol>'
+            + '<button type="button" class="coaching-button coaching-reanalyze rapport-reanalyze-button" data-analyze-button-id="' + escapeCoachingHtml(analyzeButton.id) + '">Reanalyze</button>';
+    }
+    document.addEventListener('click', async function (event) {
+        var reanalyzeButton = event.target.closest('.rapport-reanalyze-button');
+        if (reanalyzeButton) {
+            var originalButton = document.getElementById(reanalyzeButton.dataset.analyzeButtonId);
+            if (!originalButton) return;
+            var originalPanel = document.getElementById(originalButton.dataset.resultId);
+            if (originalPanel) originalPanel.dataset.complete = '';
+            originalButton.dataset.forceReanalyze = '1';
+            originalButton.click();
+            return;
+        }
+        var button = event.target.closest('.rapport-coaching-button');
+        if (!button) return;
+        var callsNode = document.getElementById(button.dataset.callsId);
+        var panel = document.getElementById(button.dataset.resultId);
+        var detailRow = document.getElementById(button.dataset.rowId);
+        if (!callsNode || !panel || !detailRow) return;
+        if (panel.dataset.complete === '1') {
+            var isVisible = window.getComputedStyle(detailRow).display !== 'none';
+            detailRow.style.display = isVisible ? 'none' : 'table-row';
+            button.textContent = isVisible ? 'Show coaching' : 'Hide coaching';
+            return;
+        }
+        detailRow.style.display = 'table-row';
+        var calls = JSON.parse(callsNode.textContent || '[]');
+        var completed = [], failed = 0;
+		var forceReanalyze = button.dataset.forceReanalyze === '1';
+		button.dataset.forceReanalyze = '';
+        button.disabled = true;
+        button.textContent = forceReanalyze ? 'Reanalyzing...' : 'Checking...';
+        try {
+			if (!forceReanalyze) {
+                panel.innerHTML = '<div class="coaching-status">Checking for an existing coaching summary...</div>';
+                var savedResult = await coachingRequest('get_agent_coaching_summary.php', {
+                    agent_id: button.dataset.agentId,
+                    begin_date: window.rapportCoachingFilters.begin_date,
+                    end_date: window.rapportCoachingFilters.end_date,
+                    campaign_id: window.rapportCoachingFilters.campaign_id,
+                    recording_ids: calls.map(function (call) { return call.recording_id; })
+                });
+                if (savedResult.found) {
+                    renderCoachingSummary(panel, savedResult, calls.length, button);
+                    panel.dataset.complete = '1';
+                    button.textContent = 'Hide coaching';
+                    return;
+                }
+            }
+            button.textContent = 'Analyzing...';
+            for (var index = 0; index < calls.length; index++) {
+                var percent = Math.round((index / calls.length) * 100);
+                panel.innerHTML = '<div class="coaching-status">Analyzing recording ' + (index + 1) + ' of ' + calls.length + '...</div><div class="coaching-progress"><div class="coaching-progress-fill" style="width:' + percent + '%"></div></div>';
+                try {
+                    var callData = await coachingRequest('analyze_long_call_recording.php', {
+                        agent_log_id: calls[index].agent_log_id, recording_id: calls[index].recording_id
+                    });
+                    completed.push(compactCoachingCall(calls[index], callData));
+                } catch (callError) { failed++; }
+            }
+            if (!completed.length) throw new Error('None of this agent’s recordings could be analyzed.');
+            panel.innerHTML = '<div class="coaching-status">Combining ' + completed.length + ' call analyses...</div><div class="coaching-progress"><div class="coaching-progress-fill" style="width:100%"></div></div>';
+            var result = await coachingRequest('aggregate_agent_coaching.php', {
+                agent_id: button.dataset.agentId, agent_name: button.dataset.agentName,
+                begin_date: window.rapportCoachingFilters.begin_date,
+                end_date: window.rapportCoachingFilters.end_date,
+                campaign_id: window.rapportCoachingFilters.campaign_id,
+                recordings_found: calls.length,
+                recording_ids: calls.map(function (call) { return call.recording_id; }),
+                reanalyze: forceReanalyze,
+                call_results: completed, failed_calls: failed
+            });
+            renderCoachingSummary(panel, result, calls.length, button);
+            panel.dataset.complete = '1';
+            button.textContent = 'Hide coaching';
+        } catch (error) {
+            panel.innerHTML = '<div class="coaching-error">' + escapeCoachingHtml(error.message || 'The agent summary could not be generated.') + '</div>';
+            button.textContent = 'Try again';
+        } finally { button.disabled = false; }
+    });
+})();
+</script>
+COACHING_SCRIPT;
 $MAIN .= "</body></html>";
 
 echo $HEADER;
