@@ -1,4 +1,6 @@
 <?php
+
+
 # AST_agent_rapport_summary.php
 # Updated Theme: Missed Call Report Style (Dark/Neon)
 # 
@@ -8,9 +10,80 @@ $startMS = microtime(true);
 require("dbconnect_mysqli.php");
 require("functions.php");
 mysqli_query($link, "SET SESSION group_concat_max_len = 1000000;");
+// require("session_auth.php");
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+if (empty($_SESSION['user'])) {
+    $redirect = urlencode($_SERVER['REQUEST_URI']);
+    header("Location: admin.php?redirect=$redirect");
+    exit;
+}
+
+$PHP_AUTH_USER = isset($_SERVER['PHP_AUTH_USER']) ? $_SERVER['PHP_AUTH_USER'] : '';
+$PHP_AUTH_PW   = isset($_SERVER['PHP_AUTH_PW']) ? $_SERVER['PHP_AUTH_PW'] : '';
+
+if (empty($PHP_AUTH_USER) && !empty($_SESSION['user'])) {
+    $PHP_AUTH_USER = $_SESSION['user'];
+
+    $stmt = "SELECT pass FROM vicidial_users WHERE user='" . mysqli_real_escape_string($link, $PHP_AUTH_USER) . "' LIMIT 1";
+    $rslt = mysqli_query($link, $stmt);
+    if ($rslt && mysqli_num_rows($rslt) > 0) {
+        $row = mysqli_fetch_row($rslt);
+        $PHP_AUTH_PW = $row[0];
+        $_SERVER['PHP_AUTH_USER'] = $PHP_AUTH_USER;
+        $_SERVER['PHP_AUTH_PW']   = $PHP_AUTH_PW;
+    }
+}
+
+$PHP_SELF=$_SERVER['PHP_SELF'];
+$PHP_SELF = preg_replace('/\.php.*/i','.php',$PHP_SELF);
+if (isset($_GET["group"]))				{$group=$_GET["group"];}
+	elseif (isset($_POST["group"]))		{$group=$_POST["group"];}
+if (isset($_GET["query_date"]))				{$query_date=$_GET["query_date"];}
+	elseif (isset($_POST["query_date"]))	{$query_date=$_POST["query_date"];}
+if (isset($_GET["end_date"]))			{$end_date=$_GET["end_date"];}
+	elseif (isset($_POST["end_date"]))	{$end_date=$_POST["end_date"];}
+if (isset($_GET["shift"]))				{$shift=$_GET["shift"];}
+	elseif (isset($_POST["shift"]))		{$shift=$_POST["shift"];}
+if (isset($_GET["submit"]))				{$submit=$_GET["submit"];}
+	elseif (isset($_POST["submit"]))	{$submit=$_POST["submit"];}
+if (isset($_GET["SUBMIT"]))				{$SUBMIT=$_GET["SUBMIT"];}
+	elseif (isset($_POST["SUBMIT"]))	{$SUBMIT=$_POST["SUBMIT"];}
+if (isset($_GET["DID"]))				{$DID=$_GET["DID"];}
+	elseif (isset($_POST["DID"]))		{$DID=$_POST["DID"];}
+if (isset($_GET["EMAIL"]))				{$EMAIL=$_GET["EMAIL"];}
+	elseif (isset($_POST["EMAIL"]))		{$EMAIL=$_POST["EMAIL"];}
+if (isset($_GET["DB"]))					{$DB=$_GET["DB"];}
+	elseif (isset($_POST["DB"]))		{$DB=$_POST["DB"];}
+if (isset($_GET["file_download"]))			{$file_download=$_GET["file_download"];}
+	elseif (isset($_POST["file_download"]))	{$file_download=$_POST["file_download"];}
+if (isset($_GET["report_display_type"]))			{$report_display_type=$_GET["report_display_type"];}
+	elseif (isset($_POST["report_display_type"]))	{$report_display_type=$_POST["report_display_type"];}
+if (isset($_GET["search_archived_data"]))			{$search_archived_data=$_GET["search_archived_data"];}
+	elseif (isset($_POST["search_archived_data"]))	{$search_archived_data=$_POST["search_archived_data"];}
+
+$DB=preg_replace("/[^0-9a-zA-Z]/","",$DB);
+
+$stmt = "SELECT user_level, view_reports FROM vicidial_users WHERE user='$PHP_AUTH_USER' LIMIT 1;";
+$rslt = mysql_to_mysqli($stmt, $link);
+
+$LOGuser_level = 0;
+$LOGview_reports = 0;
+
+if ($rslt && mysqli_num_rows($rslt) > 0) {
+    $row = mysqli_fetch_row($rslt);
+    $LOGuser_level = (int)$row[0];
+    $LOGview_reports = (int)$row[1];
+}
+
+
 
 $report_name = 'Conversation Score';
 $db_source = 'M';
+
 // Input sanitization
 $begin_date = isset($_GET["begin_date"]) ? preg_replace('/[^- \:\_0-9a-zA-Z]/', '', $_GET["begin_date"]) : date("Y-m-d");
 $end_date = isset($_GET["end_date"]) ? preg_replace('/[^- \:\_0-9a-zA-Z]/', '', $_GET["end_date"]) : date("Y-m-d");
@@ -124,7 +197,19 @@ $HEADER .= "<style>
     td small {
         font-size: 14px;
         color: #00ffcc; /* Makes the phone list stand out in neon teal */
-    }tr:hover { background-color: rgba(0, 255, 204, 0.2); }
+    }
+    td.phone-links a,
+    td.phone-links a:visited {
+        color: #00ffcc;
+        text-decoration-color: rgba(0, 255, 204, 0.55);
+        text-underline-offset: 3px;
+    }
+    td.phone-links a:hover,
+    td.phone-links a:focus {
+        color: #7fffe6;
+        text-decoration-color: #7fffe6;
+    }
+    tr:hover { background-color: rgba(0, 255, 204, 0.2); }
 
     .btn-back { 
         display: inline-block; margin-bottom: 20px; text-decoration: none; 
@@ -134,18 +219,6 @@ $HEADER .= "<style>
         box-shadow: 0 4px 15px rgba(0, 255, 204, 0.3);
     }
     small { color: rgba(255, 255, 255, 0.5); font-size: 12px; }
-    td.phone-links a,
-td.phone-links a:visited {
-    color: #00ffcc;
-    text-decoration-color: rgba(0, 255, 204, 0.55);
-    text-underline-offset: 3px;
-}
-
-td.phone-links a:hover,
-td.phone-links a:focus {
-    color: #7fffe6;
-    text-decoration-color: #7fffe6;
-}
 </style>\n";
 $HEADER .= "</head>\n<body>\n";
 
@@ -180,20 +253,17 @@ if (isset($_GET["submit"])) {
         SUM(CASE WHEN val.talk_sec > 2 THEN 1 ELSE 0 END) as total_calls, 
         SUM(CASE WHEN val.talk_sec > 120 THEN 1 ELSE 0 END) as calls_over_two_minutes,
         GROUP_CONCAT(
-    CASE WHEN val.talk_sec > 120
-    THEN CONCAT_WS('|||',
-        IFNULL(vls.phone_number, 'NoNum'),
-        IFNULL(
-            NULLIF(vls.status, ''),
-            IFNULL(NULLIF(val.status, ''), 'NEW')
-        ),
-        IFNULL(val.agent_log_id, ''),
-        IFNULL(val.lead_id, ''),
-        IFNULL(val.campaign_id, ''),
-        IFNULL(NULLIF(val.status, ''), 'NEW')
-    )
-    ELSE NULL END SEPARATOR '###'
-) AS calls_over_two_minutes_details,
+                CASE WHEN val.talk_sec > 120
+                THEN CONCAT_WS('|||',
+                    IFNULL(vls.phone_number, 'NoNum'),
+                    IFNULL(NULLIF(vls.status, ''), IFNULL(NULLIF(val.status, ''), 'NEW')),
+                    IFNULL(val.agent_log_id, ''),
+                    IFNULL(val.lead_id, ''),
+                    IFNULL(val.campaign_id, ''),
+                    IFNULL(NULLIF(val.status, ''), 'NEW')
+                )
+                ELSE NULL END SEPARATOR '###'
+            ) as calls_over_two_minutes_details,
         SUM(CASE WHEN val.talk_sec > 120 AND (val.status = 'SALE' OR vls.status = 'SALE') THEN 1 ELSE 0 END) as sales_made
     FROM 
         vicidial_agent_log val
@@ -214,7 +284,7 @@ if (isset($_GET["submit"])) {
     $MAIN .= "<h3>Rapport Summary for Campaign: $campaign_id</h3>";
     $MAIN .= "<div class='note-box'><em><strong>* Note: The Total Calls count represents only calls with human conversation.</strong></em></div>";
     $MAIN .= "<div class='note-box'><em><strong>* Note: Clicking on a phone number will take you to the Quality control page.</strong></em></div>";
-
+    
     $MAIN .= "<table>";
     $MAIN .= "<tr><th>User</th><th>Agent Name</th><th>* Total Calls</th><th>Calls > 2 Min</th><th>% Over 2 Min</th><th>Rapport Verdict</th><th>Phones (Calls > 2 Min)</th><th>Sales</th></tr>";
 
@@ -226,70 +296,41 @@ if (isset($_GET["submit"])) {
         $full_name = $row['full_name'];
         $total_calls = $row['total_calls'];
         $calls_over_two_minutes = $row['calls_over_two_minutes'];
-        // $phone_numbers = $row['phone_numbers_over_two_minutes'] ? str_replace(',', ', ', $row['phone_numbers_over_two_minutes']) : "None";
         $phone_links = [];
-$phone_csv_entries = [];
+        $phone_csv_entries = [];
+        if (!empty($row['calls_over_two_minutes_details'])) {
+            foreach (explode('###', $row['calls_over_two_minutes_details']) as $call_detail) {
+                $parts = explode('|||', $call_detail, 6);
+                if (count($parts) !== 6) {
+                    continue;
+                }
 
-if (!empty($row['calls_over_two_minutes_details'])) {
-    foreach (explode('###', $row['calls_over_two_minutes_details']) as $call_detail) {
-        $parts = explode('|||', $call_detail, 6);
+                [$phone_number, $display_status, $agent_log_id, $lead_id, $call_campaign_id, $qc_status] = $parts;
+                $phone_label = $phone_number . ' (' . $display_status . ')';
+                $phone_csv_entries[] = $phone_label;
 
-        if (count($parts) !== 6) {
-            continue;
+                if ($phone_number === 'NoNum' || $agent_log_id === '' || $lead_id === '' || $call_campaign_id === '') {
+                    $phone_links[] = htmlspecialchars($phone_label, ENT_QUOTES, 'UTF-8');
+                    continue;
+                }
+
+                $qc_url = 'qc_modify_lead.php?' . http_build_query([
+                    'claim_QC' => 'CLAIM',
+                    'qc_display_method' => 'CALL',
+                    'qc_display_group_type' => 'CAMPAIGN',
+                    'agent_log_id' => $agent_log_id,
+                    'qc_status' => $qc_status,
+                    'lead_id' => $lead_id,
+                    'campaign_id' => $call_campaign_id,
+                    'referring_section' => 'CAMPAIGN',
+                    'referring_element' => $call_campaign_id,
+                ]);
+                $phone_links[] = '<a href="' . htmlspecialchars($qc_url, ENT_QUOTES, 'UTF-8') . '">'
+                    . htmlspecialchars($phone_label, ENT_QUOTES, 'UTF-8') . '</a>';
+            }
         }
-
-        list(
-            $phone_number,
-            $display_status,
-            $agent_log_id,
-            $lead_id,
-            $call_campaign_id,
-            $qc_status
-        ) = $parts;
-
-        $phone_label = $phone_number . ' (' . $display_status . ')';
-        $phone_csv_entries[] = $phone_label;
-
-        if (
-            $phone_number === 'NoNum' ||
-            $agent_log_id === '' ||
-            $lead_id === '' ||
-            $call_campaign_id === ''
-        ) {
-            $phone_links[] = htmlspecialchars(
-                $phone_label,
-                ENT_QUOTES,
-                'UTF-8'
-            );
-            continue;
-        }
-
-        $qc_url = 'qc_modify_lead.php?' . http_build_query([
-            'claim_QC' => 'CLAIM',
-            'qc_display_method' => 'CALL',
-            'qc_display_group_type' => 'CAMPAIGN',
-            'agent_log_id' => $agent_log_id,
-            'qc_status' => $qc_status,
-            'lead_id' => $lead_id,
-            'campaign_id' => $call_campaign_id,
-            'referring_section' => 'CAMPAIGN',
-            'referring_element' => $call_campaign_id
-        ]);
-
-        $phone_links[] =
-            '<a href="' . htmlspecialchars($qc_url, ENT_QUOTES, 'UTF-8') . '">' .
-            htmlspecialchars($phone_label, ENT_QUOTES, 'UTF-8') .
-            '</a>';
-    }
-}
-
-$phone_numbers_html = !empty($phone_links)
-    ? implode(', ', $phone_links)
-    : 'None';
-
-$phone_numbers_csv = !empty($phone_csv_entries)
-    ? implode(', ', $phone_csv_entries)
-    : 'None';
+        $phone_numbers_html = $phone_links ? implode(', ', $phone_links) : 'None';
+        $phone_numbers_csv = $phone_csv_entries ? implode(', ', $phone_csv_entries) : 'None';
         $percentage_over_two_minutes = ($total_calls > 0) ? ($calls_over_two_minutes / $total_calls) * 100 : 0;
         $rapport_verdict = ($calls_over_two_minutes < 3) ? "Needs Improvement" : "Decent Rapport Builder";
         $sales_made = $row['sales_made'];
@@ -297,23 +338,10 @@ $phone_numbers_csv = !empty($phone_csv_entries)
         $MAIN .= "<tr>";
         $MAIN .= "<td>$user</td><td>$full_name</td><td>$total_calls</td><td>$calls_over_two_minutes</td>";
         $MAIN .= "<td>" . number_format($percentage_over_two_minutes, 2) . "%</td>";
-        // $MAIN .= "<td>$rapport_verdict</td><td><small>$phone_numbers</small></td><td>$sales_made</td>";
-        $MAIN .= "<td>$rapport_verdict</td>";
-$MAIN .= "<td class='phone-links'><small>$phone_numbers_html</small></td>";
-$MAIN .= "<td>$sales_made</td>";
+        $MAIN .= "<td>$rapport_verdict</td><td class='phone-links'><small>$phone_numbers_html</small></td><td>$sales_made</td>";
         $MAIN .= "</tr>";
 
-        // $csv_data[] = [$user, $full_name, $total_calls, $calls_over_two_minutes, number_format($percentage_over_two_minutes, 2) . "%", $rapport_verdict, $phone_numbers, $sales_made];
-        $csv_data[] = [
-    $user,
-    $full_name,
-    $total_calls,
-    $calls_over_two_minutes,
-    number_format($percentage_over_two_minutes, 2) . "%",
-    $rapport_verdict,
-    $phone_numbers_csv,
-    $sales_made
-];
+        $csv_data[] = [$user, $full_name, $total_calls, $calls_over_two_minutes, number_format($percentage_over_two_minutes, 2) . "%", $rapport_verdict, $phone_numbers_csv, $sales_made];
     }
     $MAIN .= "</table>";
 

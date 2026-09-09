@@ -56,19 +56,31 @@ if (!isset($link) || !($link instanceof mysqli)) {
 
 $queueStatement = mysqli_prepare(
     $link,
-    'SELECT qc_log_id, recording_id, qc_scorecard_id FROM quality_control_queue WHERE qc_log_id = ? AND qc_agent = ? LIMIT 1'
+    'SELECT qc_log_id, recording_id, qc_scorecard_id FROM quality_control_queue WHERE qc_log_id = ? LIMIT 1'
 );
+
+// if ($queueStatement === false) {
+//     respond(500, ['success' => false, 'message' => 'Could not validate the QC record.']);
+// }
+
+// $sessionUser = (string) $_SESSION['user'];
+// mysqli_stmt_bind_param($queueStatement, 'is', $qcLogId, $sessionUser);
+// mysqli_stmt_execute($queueStatement);
+// $queueResult = mysqli_stmt_get_result($queueStatement);
+// $queueRow = $queueResult ? mysqli_fetch_assoc($queueResult) : null;
+// mysqli_stmt_close($queueStatement);
 
 if ($queueStatement === false) {
     respond(500, ['success' => false, 'message' => 'Could not validate the QC record.']);
 }
 
 $sessionUser = (string) $_SESSION['user'];
-mysqli_stmt_bind_param($queueStatement, 'is', $qcLogId, $sessionUser);
+mysqli_stmt_bind_param($queueStatement, 'i', $qcLogId);
 mysqli_stmt_execute($queueStatement);
 $queueResult = mysqli_stmt_get_result($queueStatement);
 $queueRow = $queueResult ? mysqli_fetch_assoc($queueResult) : null;
 mysqli_stmt_close($queueStatement);
+
 
 if (!is_array($queueRow)) {
     respond(403, ['success' => false, 'message' => 'This QC record is not assigned to your account.']);
