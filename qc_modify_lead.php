@@ -919,7 +919,17 @@ if ($claim_QC && $auth == 1) {
 				q.total_points_possible=totals.total_points_possible,
 				q.score_percentage=ROUND(100 * totals.total_points_earned / NULLIF(totals.total_points_possible, 0), 2)
 			WHERE q.qc_log_id='$qc_log_id'";
-			$initial_totals_rslt = mysql_to_mysqli($initial_totals_stmt, $link);
+			// The claim and checkpoints are already saved. A cached totals failure
+			// must not prevent opening them; the scorecard calculates its displayed
+			// totals from the checkpoint rows. Log both mysqli error modes.
+			try {
+				$initial_totals_rslt = mysqli_query($link, $initial_totals_stmt);
+				if ($initial_totals_rslt === false) {
+					error_log('QC initial totals update failed for qc_log_id=' . $qc_log_id . ': ' . mysqli_error($link));
+				}
+			} catch (mysqli_sql_exception $error) {
+				error_log('QC initial totals update failed for qc_log_id=' . $qc_log_id . ': ' . $error->getMessage());
+			}
 		}
 		#exit;
 	} else {
@@ -1506,7 +1516,7 @@ if (preg_match("/cf_encrypt/", $active_modules)) {
 
 		}
 
-		function LogQCData(qc_log_row_id) {
+		function LogQCData(qc_log_row_id, skipTotalsSync) {
 			var xmlhttp = false;
 			var checkpoint_comment_field_ID = "checkpoint_comment_agent" + qc_log_row_id;
 			var instant_fail_field_ID = "instant_fail_value" + qc_log_row_id;
@@ -1557,7 +1567,11 @@ if (preg_match("/cf_encrypt/", $active_modules)) {
 						if (xmlhttp.readyState == 4) {
 							if (xmlhttp.status >= 200 && xmlhttp.status < 300) {
 								QASpanText = xmlhttp.responseText;
-								SyncQcStoredTotals().then(function(success) { resolve(success); });
+								if (skipTotalsSync) {
+									resolve(true);
+								} else {
+									SyncQcStoredTotals().then(function(success) { resolve(success); });
+								}
 							} else {
 								resolve(false);
 							}
@@ -3791,13 +3805,23 @@ if (preg_match("/cf_encrypt/", $active_modules)) {
 										commentField.value = commentParts.join('\\n');
 									}
 
-									saveRequests.push(LogQCData(logId));
+									saveRequests.push(LogQCData(logId, true));
 									updated++;
 								});
 
 								RefreshQcScoreTotals();
 
 								return {updated: updated, saveRequests: saveRequests};
+							}
+
+							async function refreshAiSentimentPanel() {
+								var response = await fetch($qc_return_url_json, {credentials: 'same-origin', cache: 'no-store'});
+								if (!response.ok) throw new Error('Could not load the saved sentiment analysis. Please refresh the page.');
+								var page = new DOMParser().parseFromString(await response.text(), 'text/html');
+								var savedPanel = page.getElementById('qc-ai-sentiment-panel');
+								var currentPanel = document.getElementById('qc-ai-sentiment-panel');
+								if (!savedPanel || !currentPanel) throw new Error('Could not load the saved sentiment analysis. Please refresh the page.');
+								currentPanel.replaceWith(document.importNode(savedPanel, true));
 							}
 
 							async function generateAiAnalysis(qcScorecardId, recordingId, button) {
@@ -3819,6 +3843,12 @@ if (preg_match("/cf_encrypt/", $active_modules)) {
 									});
 									var data = await readAiResponse(response, 'checkpoints and sentiment analysis');
 
+									// Display persisted sentiment even if a later checkpoint save fails.
+									var sentimentRefreshError = null;
+									await refreshAiSentimentPanel().catch(function(error) {
+										sentimentRefreshError = error;
+									});
+
 									var result = applyCheckpointEvaluation(data);
 
 									var expectedCheckpointCount = document.querySelectorAll('[id^=\"checkpoint_points_earned\"]').length;
@@ -3832,9 +3862,12 @@ if (preg_match("/cf_encrypt/", $active_modules)) {
 									}
 
 									var saved = await Promise.all(result.saveRequests);
+									// Totals synchronization is best effort; the refreshed page calculates
+									// displayed totals directly from the saved checkpoints.
+									await SyncQcStoredTotals();
 
 									if (saved.some(function(success) { return !success; })) {
-									throw new Error('The AI results were generated, but some checkpoint updates could not be saved. Please try again.');
+									throw new Error('Sentiment analysis was saved, but some checkpoint updates could not be saved. Please check your session or connection and try again.' + (sentimentRefreshError ? ' ' + sentimentRefreshError.message : ''));
 									}
 
 									// Refresh the saved QC data without adding a duplicate history entry.
