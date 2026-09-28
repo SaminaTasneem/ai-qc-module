@@ -62,49 +62,8 @@ function resolveRecordingAudio(mysqli $link, string $recordingId): array
         }
     }
 
-    if (!preg_match('#^https?://#i', $location)) {
-        throw new RuntimeException('The audio file for recording ID ' . $recordingId . ' was not found or is not readable.');
-    }
+    throw new RuntimeException('The recording does not exist.');
 
-    $temporaryFile = tempnam(sys_get_temp_dir(), 'qc_recording_');
-
-    if ($temporaryFile === false) {
-        throw new RuntimeException('Could not create a temporary recording file.');
-    }
-
-    $fileHandle = fopen($temporaryFile, 'wb');
-
-    if ($fileHandle === false) {
-        unlink($temporaryFile);
-        throw new RuntimeException('Could not open the temporary recording file.');
-    }
-
-    $curl = curl_init($location);
-
-    if ($curl === false) {
-        fclose($fileHandle);
-        unlink($temporaryFile);
-        throw new RuntimeException('Could not initialize the recording download.');
-    }
-
-    curl_setopt_array($curl, [
-        CURLOPT_FILE => $fileHandle,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_CONNECTTIMEOUT => 15,
-        CURLOPT_TIMEOUT => 300,
-        CURLOPT_FAILONERROR => true,
-    ]);
-    $downloaded = curl_exec($curl);
-    $downloadError = curl_error($curl);
-    curl_close($curl);
-    fclose($fileHandle);
-
-    if ($downloaded === false || !is_file($temporaryFile) || filesize($temporaryFile) === 0) {
-        unlink($temporaryFile);
-        throw new RuntimeException($downloadError !== '' ? $downloadError : 'Could not download the recording audio.');
-    }
-
-    return ['path' => $temporaryFile, 'temporary' => true];
 }
 
 function removeTemporaryRecording(array $recording): void
